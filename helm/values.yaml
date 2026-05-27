@@ -1,0 +1,20 @@
+service:
+  name: image-provider
+image:
+  repository: 952893849914.dkr.ecr.us-east-1.amazonaws.com/aicares-application/image-provider
+containerPort: 8081
+resources:
+  limits:
+    memory: "120Mi"
+  requests:
+    memory: "32Mi"
+    cpu: "50m"
+env:
+  - name: IMAGE_PROVIDER_PORT
+    value: "8081"
+  - name: OTEL_SERVICE_NAME
+    value: "image-provider"
+  - name: OTEL_EXPORTER_OTLP_ENDPOINT
+    value: "http://otel-collector:4317"
+nodeSelector:
+  eks.amazonaws.com/nodegroup: graviton-workers
