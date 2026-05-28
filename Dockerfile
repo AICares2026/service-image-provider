@@ -5,8 +5,8 @@ FROM nginxinc/nginx-unprivileged:1.29.0-alpine3.22-otel
 
 USER 101
 
-COPY src/image-provider/static/ /static/
-COPY src/image-provider/nginx.conf.template /nginx.conf.template
+COPY ./static/ /static/
+COPY ./nginx.conf.template /nginx.conf.template
 
 EXPOSE ${IMAGE_PROVIDER_PORT}
 
