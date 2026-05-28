@@ -1,0 +1,66 @@
+## Skill: Dockerfile Base Image Updater
+
+### Objective
+Scan all Dockerfiles in the repository for outdated base images and update them to the latest stable patch versions. Commit all changes in a single overnight maintenance commit.
+
+---
+
+### Step 1: Locate Dockerfiles
+
+Search the entire repository for files matching any of the following patterns:
+- Named exactly `Dockerfile`
+- Named with a suffix pattern `Dockerfile.<variant>` (e.g., `Dockerfile.dev`, `Dockerfile.prod`)
+- Named with a prefix pattern `<variant>.Dockerfile` (e.g., `test.Dockerfile`)
+
+Search recursively from the repository root. Collect the full path of every matching file.
+
+Exclude any file found inside the following directories (these are unlikely to be real build targets and may contain fixtures or test data):
+- `vendor/`
+- `testdata/`
+- `fixtures/`
+- `.git/`
+- `node_modules/`
+
+---
+
+### Step 2: Parse `FROM` Instructions
+
+For each Dockerfile found, extract every `FROM` instruction. A Dockerfile may have multiple `FROM` lines (multi-stage builds). Extract all of them.
+
+For each `FROM` line, identify the following components:
+
+```
+FROM [--platform=<platform>] <image>[:<tag>|@<digest>] [AS <name>]
+```
+
+Extract:
+- `image`: the image name, including registry prefix if present (e.g., `docker.io/library/node`, `gcr.io/distroless/java`, `ubuntu`)
+- `tag`: the version tag if present (e.g., `20.11.0`, `3.12-slim`, `22.04`)
+- `digest`: the `@sha256:...` digest if present instead of or in addition to a tag
+- `platform`: the `--platform` flag value if present (preserve it unchanged)
+- `alias`: the `AS <name>` alias if present (preserve it unchanged)
+
+Handle the following formatting variations correctly:
+- Tabs or multiple spaces between tokens (e.g., `FROM  node:20.11.0  AS  builder`)
+- Mixed case in the `FROM` keyword itself (e.g., `from node:20.11.0`, `From node:20.11.0`) — Dockerfile keywords are case-insensitive
+- Continuation lines using `\` line continuation — treat logically joined lines as a single `FROM` instruction
+- Inline comments after a valid `FROM` instruction (e.g., `FROM node:20.11.0 # pinned`) — extract the instruction and ignore the comment portion
+
+Do not extract `FROM` statements that appear inside heredoc blocks (i.e., between `<<EOF` ... `EOF` or similar markers), as these are shell content embedded in `RUN` instructions, not Dockerfile directives.
+
+---
+
+### Step 3: Determine Which Images to Update
+
+**Update** a `FROM` line only when ALL of the following are true:
+1. A concrete tag is specified (not a digest-only reference and not `FROM scratch`).
+2. The tag references a specific version that follows semver or a known versioned format (e.g., `3.12.0`, `20.11.1-alpine3.19`, `22.04`, `11.0.22-jre`).
+3. The image is publicly available on Docker Hub or a standard public registry that can be queried without credentials.
+
+**Do NOT update** in any of the following cases:
+- `FROM scratch` — leave entirely untouched.
+- Tags that are purely symbolic/floating with no version number: `latest`, `stable`, `edge`, `nightly`, `lts`, `current`, `mainline`, `oldstable`, `testing`, `experimental` — do not touch these; they are intentionally floating.
+- Tags composed only of a major version with no minor/patch (e.g., `node:20`, `python:3`, `ubuntu:22`) — these are intentionally floating major or major.minor pins; do not touch them.
+- Tags composed only of major.minor with no patch component only when the image's convention uses major.minor as a floating alias (verify before updating; if uncertain, skip).
+- Digest-only references (`FROM image@sha256:...` with no tag) — do not touch; the user has pinned to a specific digest intentionally.
+- Tags that combine a symbolic label with a version suffix in a way where the version qual

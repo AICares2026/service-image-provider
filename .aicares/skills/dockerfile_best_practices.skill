@@ -1,0 +1,87 @@
+You are an autonomous code-maintenance agent. Your task is to scan the repository for Dockerfiles and refactor them to apply best practices. Follow every rule below precisely. You cannot ask questions — make all decisions based on the criteria defined here.
+
+---
+
+## SCOPE: WHAT TO SCAN
+
+- Find every file named exactly `Dockerfile` or matching `Dockerfile.*` (e.g., `Dockerfile.dev`, `Dockerfile.prod`) in the repository tree.
+- Also find files referenced by `docker-compose*.yml` under the `dockerfile:` key that do not match the naming pattern above.
+- Do **not** modify any file inside `vendor/`, `node_modules/`, `.git/`, or any directory whose name starts with `.` (except `.dockerignore` files, which you may create or edit).
+
+---
+
+## RULE 1 — COMBINE CONSECUTIVE RUN LAYERS
+
+**Detect:** Multiple consecutive `RUN` instructions in the same build stage that are not separated by an `ARG`, `ENV`, `COPY`, `ADD`, or `FROM` instruction.
+
+**Fix:** Merge all consecutive `RUN` commands into a single `RUN` instruction using ` && \` as the join operator. Preserve the original commands verbatim and in order. Add a `\` line-continuation after each command except the last. Align continuation lines with 4 spaces of indentation.
+
+Example:
+```dockerfile
+# Before
+RUN apt-get update
+RUN apt-get install -y curl
+RUN rm -rf /var/lib/apt/lists/*
+
+# After
+RUN apt-get update && \
+    apt-get install -y curl && \
+    rm -rf /var/lib/apt/lists/*
+```
+
+**Handling already-multiline RUN instructions:** If a `RUN` instruction already spans multiple lines using `\` continuations, treat the entire multi-line block as a single `RUN` instruction. When merging it with adjacent consecutive `RUN` instructions, inline the entire existing block on a single logical line first, then re-apply the `&&`-chain formatting uniformly across all merged commands.
+
+Example:
+```dockerfile
+# Before
+RUN apt-get update && \
+    apt-get install -y curl
+RUN rm -rf /var/lib/apt/lists/*
+
+# After
+RUN apt-get update && \
+    apt-get install -y curl && \
+    rm -rf /var/lib/apt/lists/*
+```
+
+**Leave alone:**
+- A single `RUN` instruction that is already a self-contained `&&`-chained block with no adjacent consecutive `RUN` instructions — do not reformat it.
+- `RUN` instructions separated by any non-`RUN` instruction — do not reorder instructions to enable merging; only merge what is already consecutive.
+- `RUN` instructions in separate build stages (separated by a `FROM` line) must never be merged across that boundary.
+- `RUN` instructions that use shell constructs spanning multiple lines for readability (e.g., a `RUN` block using heredoc `<<EOF` syntax) — leave these untouched.
+
+---
+
+## RULE 2 — ADD OR UPDATE .dockerignore
+
+**Detect:** For every directory containing a `Dockerfile*`, check whether a `.dockerignore` file exists in that same directory. Also inspect the `COPY` and `ADD` instructions in the Dockerfile to understand what is actually needed in the build context.
+
+**Fix — create or append entries:** Ensure the `.dockerignore` file contains at minimum the following entries if they are not already present and if those paths/patterns are not explicitly `COPY`-ed or `ADD`-ed in the Dockerfile:
+
+```
+.git
+.gitignore
+.env
+.env.*
+*.log
+*.md
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.mypy_cache
+.tox
+node_modules
+npm-debug.log*
+dist
+build
+coverage
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+```
+
+**Determining conflicts with COPY/ADD instructions:**
+- Parse every `COPY` and `ADD` instruction in all Dockerfiles in the same directory. Extract the source arguments (all arguments before the final destination argument).
+- If a source argument is an exact path (e.g., `COPY node_modules ./node_modules`), do not add a `.dockerignore` entry that would suppress

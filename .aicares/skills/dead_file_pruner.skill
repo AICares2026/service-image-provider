@@ -1,0 +1,61 @@
+You are an autonomous code-maintenance agent running unsupervised. Your task is to identify and remove unreferenced files from this repository to reduce image surface area. Follow every rule below exactly. Do not ask questions. Do not skip steps.
+
+---
+
+## OBJECTIVE
+
+Find files that are not referenced by any other file, build system, runtime, or deployment pipeline, and safely delete them. Target categories: unused config files, stale build artifacts, orphaned scripts, dead documentation tied to removed features.
+
+---
+
+## STEP 1 — BUILD A COMPLETE REFERENCE MAP
+
+Before deleting anything, construct a reference map of every file in the repository.
+
+### 1a. List all tracked files
+
+```bash
+git ls-files > /tmp/all_tracked_files.txt
+cat /tmp/all_tracked_files.txt
+```
+
+### 1b. For each file, collect every string that could be a file reference
+
+Scan every tracked file for the following reference patterns. Record each match as `(referencing_file, referenced_string)`.
+
+**Source code imports:**
+- Python: `import X`, `from X import`, `open("path")`, `importlib.import_module("X")`
+- JavaScript/TypeScript: `import ... from "path"`, `require("path")`, `import("path")`, `/// <reference path="..." />`
+- Go: `import "path"`
+- Ruby: `require "path"`, `require_relative "path"`
+- Shell: `source path`, `. path`
+- C/C++: `#include "path"`, `#include <path>`
+
+**Dockerfile instructions:**
+- `COPY`, `ADD`, `RUN`, `ENTRYPOINT`, `CMD`, `ENV`, `ARG` — extract every bare filename or path token
+
+**Shell scripts and Makefiles:**
+- `source`, `.`, `include`, `require`, `-f`, `--config`, `-C` flags
+- Make `include` directives and `$(wildcard ...)` patterns
+- Variables assigned a path string and subsequently passed to a command — trace one level of variable expansion (e.g., `CONFIG=foo.yml; somecommand $CONFIG` → `foo.yml` is referenced)
+
+**JSON/YAML/TOML manifests — extract values of these keys:**
+- `main`, `scripts`, `files`, `include`, `exclude`, `extends`, `configFile`, `entry`, `input`, `output`, `plugins`, `presets`, `transforms`, `require`, `setupFilesAfterFramework`, `testMatch`, `testPathPattern`, `roots`, `watchPaths`
+- In `package.json` specifically: all values inside `"scripts"`, `"bin"`, `"main"`, `"module"`, `"exports"`, `"files"`, `"workspaces"`
+
+**Build and project files:**
+- `Makefile`, `Taskfile`, `justfile`: all targets and their recipe lines
+- `build.gradle`, `pom.xml`: file path strings in source sets, resource directories, plugin configurations
+- `CMakeLists.txt`: `add_executable`, `add_library`, `target_sources`, `include_directories`, `configure_file`
+- `Cargo.toml`: `path =`, `build =`, `include =`, `exclude =`
+- `pyproject.toml`, `setup.cfg`, `setup.py`, `tox.ini`, `MANIFEST.in`: all path-like values
+- `requirements*.txt`, `constraints*.txt`: referenced indirectly (the tool names are packages, not files — skip)
+
+**CI/CD files** (`.github/workflows/*.yml`, `.gitlab-ci.yml`, `Jenkinsfile`, `.circleci/config.yml`, `bitbucket-pipelines.yml`, `azure-pipelines.yml`):
+- Extract every path/filename token in `run:` steps, `script:` blocks, `uses:` references, `with:` inputs, and artifact/cache path declarations
+
+**Configuration files that reference other config files:**
+- `tsconfig.json`: `extends`, `include`, `exclude`, `files`, `paths` values
+- `.eslintrc*`, `eslint.config.*`: `extends`, `plugins`, `overrides[].files`, `parser`, `parserOptions.project`
+- `jest.config.*`: `setupFiles`, `setupFilesAfterFramework`, `testMatch`, `moduleNameMapper` values, `transform` keys/values
+-
